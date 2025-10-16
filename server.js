@@ -7,15 +7,34 @@ app.use(cors());
 
 const COINGECKO_URL = "https://api.coingecko.com/api/v3";
 
+// 🧠 Helper: retry with delay to handle rate limit
+async function fetchWithRetry(url, options = {}, retries = 3, delay = 2000) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const response = await axios.get(url, options);
+      return response.data;
+    } catch (err) {
+      // Handle 429 (Too Many Requests)
+      if (err.response && err.response.status === 429 && i < retries - 1) {
+        console.warn(`⚠️ Rate limited — retrying in ${delay / 1000}s...`);
+        await new Promise(res => setTimeout(res, delay));
+      } else {
+        throw err;
+      }
+    }
+  }
+}
+
 // ✅ Current price
 app.get("/crypto/:id/price", async (req, res) => {
   const { id } = req.params;
   try {
-    const { data } = await axios.get(`${COINGECKO_URL}/simple/price`, {
+    const data = await fetchWithRetry(`${COINGECKO_URL}/simple/price`, {
       params: { ids: id, vs_currencies: "usd,php" },
     });
     res.json({ coin: id, price: data[id] });
   } catch (err) {
+    console.error("❌ Error fetching price:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -25,11 +44,12 @@ app.get("/crypto/:id/market_chart", async (req, res) => {
   const { id } = req.params;
   const { days } = req.query;
   try {
-    const { data } = await axios.get(`${COINGECKO_URL}/coins/${id}/market_chart`, {
+    const data = await fetchWithRetry(`${COINGECKO_URL}/coins/${id}/market_chart`, {
       params: { vs_currency: "usd", days: days || "365" },
     });
     res.json(data);
   } catch (err) {
+    console.error("❌ Error fetching market chart:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -38,7 +58,7 @@ app.get("/crypto/:id/market_chart", async (req, res) => {
 app.get("/crypto/:id/info", async (req, res) => {
   const { id } = req.params;
   try {
-    const { data } = await axios.get(`${COINGECKO_URL}/coins/${id}`);
+    const data = await fetchWithRetry(`${COINGECKO_URL}/coins/${id}`);
     const info = {
       name: data.name,
       symbol: data.symbol,
@@ -49,6 +69,7 @@ app.get("/crypto/:id/info", async (req, res) => {
     };
     res.json(info);
   } catch (err) {
+    console.error("❌ Error fetching info:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -56,14 +77,13 @@ app.get("/crypto/:id/info", async (req, res) => {
 // ✅ Summary route (lahat ng mahalagang info)
 app.get("/crypto/:id/summary", async (req, res) => {
   const { id } = req.params;
-
   try {
-    const { data: infoData } = await axios.get(`${COINGECKO_URL}/coins/${id}`);
-    const m = infoData.market_data;
-    const { data: priceData } = await axios.get(`${COINGECKO_URL}/simple/price`, {
+    const infoData = await fetchWithRetry(`${COINGECKO_URL}/coins/${id}`);
+    const priceData = await fetchWithRetry(`${COINGECKO_URL}/simple/price`, {
       params: { ids: id, vs_currencies: "usd,php" },
     });
 
+    const m = infoData.market_data;
     const currentUSD = priceData[id].usd;
     const percentBelowATH = ((m.ath.usd - currentUSD) / m.ath.usd * 100).toFixed(2);
     const percentAboveATL = ((currentUSD - m.atl.usd) / m.atl.usd * 100).toFixed(2);
@@ -80,6 +100,7 @@ app.get("/crypto/:id/summary", async (req, res) => {
       }
     });
   } catch (err) {
+    console.error("❌ Error in summary route:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
